@@ -1,0 +1,288 @@
+import { apiFetch, withTenantQuery } from "@/lib/api/client";
+import type {
+  SupplierListRow,
+  SupplierFilters,
+  ContactDueSummary,
+  ContactLedgerEntry,
+  CsvImportResult,
+  PayContactDueRequest,
+  PayContactDueResult,
+} from "@vonos/types";
+import {
+  DEFAULT_TABLE_PAGE_SIZE,
+  EXPORT_PAGE_SIZE,
+  TYPEAHEAD_PAGE_SIZE,
+  fetchAllPages,
+  fetchFirstPage,
+  type ListPage,
+} from "@/lib/api/fetchAllPages";
+import { appendListQuery, fetchTenantListPage } from "@/lib/api/listPageHelpers";
+import { nameListCursor } from "@/lib/utils/pagination";
+
+export type { SupplierListRow };
+
+const LIST_PATH = "/suppliers";
+
+export interface SupplierKpiSummary {
+  totalSuppliers: number;
+  onTimeRate: number;
+  avgLeadTimeDays: number;
+  openPoValue: number;
+  currency: string;
+}
+
+function supplierExtraParams(filters?: SupplierFilters): Record<string, string | undefined> {
+  if (!filters) return {};
+  return {
+    search: filters.search,
+    purchaseDue: filters.purchaseDue ? "true" : undefined,
+    purchaseReturn: filters.purchaseReturn ? "true" : undefined,
+    advanceBalance: filters.advanceBalance ? "true" : undefined,
+    openingBalance: filters.openingBalance ? "true" : undefined,
+    assignedToUserId: filters.assignedToUserId,
+    status: filters.status,
+    includeSummary:
+      filters.includeSummary === false
+        ? "0"
+        : filters.includeSummary === true
+          ? "1"
+          : undefined,
+  };
+}
+
+async function fetchSuppliersRaw(
+  tenantId: string,
+  cursor?: string,
+  limit?: number,
+  filters?: SupplierFilters,
+): Promise<SupplierListRow[] | { items: SupplierListRow[]; totalCount: number }> {
+  const tenantPath = withTenantQuery(LIST_PATH, tenantId);
+  const url = appendListQuery(tenantPath, {
+    cursor,
+    limit,
+    ...supplierExtraParams(filters),
+  });
+  const response = await apiFetch(url);
+  if (!response.ok) throw new Error("Failed to fetch suppliers");
+  return response.json();
+}
+
+export async function getSuppliersPage(
+  tenantId: string,
+  cursor: string | undefined,
+  limit = DEFAULT_TABLE_PAGE_SIZE,
+  filters?: SupplierFilters,
+): Promise<ListPage<SupplierListRow>> {
+  return fetchTenantListPage(
+    LIST_PATH,
+    tenantId,
+    cursor,
+    limit,
+    supplierExtraParams({
+      ...filters,
+      includeSummary: filters?.includeSummary ?? false,
+    }),
+  );
+}
+
+/** Count + amountSummary only (limit=1) — pair with rows-first getSuppliersPage. */
+export async function getSuppliersListSummary(
+  tenantId: string,
+  filters?: SupplierFilters,
+): Promise<Pick<ListPage<SupplierListRow>, "totalCount" | "amountSummary">> {
+  const page = await getSuppliersPage(
+    tenantId,
+    undefined,
+    1,
+    { ...filters, includeSummary: true },
+  );
+  return { totalCount: page.totalCount, amountSummary: page.amountSummary };
+}
+
+/** Full supplier list for export — not for table rendering. */
+export async function getAllSuppliers(
+  tenantId: string,
+  filters?: SupplierFilters,
+): Promise<SupplierListRow[]> {
+  return fetchAllPages(
+    (cursor, limit) => fetchSuppliersRaw(tenantId, cursor, limit, filters),
+    EXPORT_PAGE_SIZE,
+    nameListCursor,
+  );
+}
+
+/** Typeahead / option lists — capped; pass search for more matches. */
+export async function getSuppliers(
+  tenantId: string,
+  filters?: SupplierFilters,
+): Promise<SupplierListRow[]> {
+  return fetchFirstPage(
+    (cursor, limit) => fetchSuppliersRaw(tenantId, cursor, limit, filters),
+    filters?.limit ?? TYPEAHEAD_PAGE_SIZE,
+  );
+}
+
+export async function getSupplierKpis(tenantId: string): Promise<SupplierKpiSummary> {
+  const response = await apiFetch(
+    withTenantQuery("/suppliers/kpi-summary", tenantId),
+  );
+  if (!response.ok) throw new Error("Failed to fetch supplier KPIs");
+  return response.json();
+}
+
+export async function getSupplier(id: string): Promise<SupplierListRow> {
+  const response = await apiFetch(`/suppliers/${id}`);
+  if (!response.ok) throw new Error("Failed to fetch supplier");
+  return response.json();
+}
+
+/** Name only — for titles / breadcrumbs. */
+export async function getSupplierMeta(
+  id: string,
+): Promise<{ id: string; name: string }> {
+  const response = await apiFetch(`/suppliers/${id}/meta`);
+  if (!response.ok) throw new Error("Failed to fetch supplier");
+  return response.json();
+}
+
+export interface CreateSupplierRequest {
+  name: string;
+  contactName?: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  locationCode?: string;
+  notes?: string;
+  taxNumber?: string | null;
+  openingBalance?: number;
+  assignedToUserId?: string;
+}
+
+export type UpdateSupplierRequest = Partial<CreateSupplierRequest>;
+
+export async function createSupplier(body: CreateSupplierRequest): Promise<SupplierListRow> {
+  const response = await apiFetch("/suppliers", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error("Failed to create supplier");
+  return response.json();
+}
+
+export async function updateSupplier(
+  id: string,
+  body: UpdateSupplierRequest,
+): Promise<SupplierListRow> {
+  const response = await apiFetch(`/suppliers/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error("Failed to update supplier");
+  return response.json();
+}
+
+export async function setSupplierStatus(
+  tenantId: string,
+  id: string,
+  status: "active" | "inactive",
+): Promise<SupplierListRow> {
+  const response = await apiFetch(
+    withTenantQuery(`/suppliers/${id}/status`, tenantId),
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(body?.message ?? "Failed to update supplier status");
+  }
+  return response.json();
+}
+
+export async function getSupplierSummary(
+  tenantId: string,
+  supplierId: string,
+): Promise<ContactDueSummary> {
+  const response = await apiFetch(
+    withTenantQuery(`/suppliers/${supplierId}/summary`, tenantId),
+  );
+  if (!response.ok) throw new Error("Failed to fetch supplier summary");
+  return response.json();
+}
+
+export async function getSupplierLedger(
+  tenantId: string,
+  supplierId: string,
+): Promise<ContactLedgerEntry[]> {
+  const response = await apiFetch(
+    withTenantQuery(`/suppliers/${supplierId}/ledger`, tenantId),
+  );
+  if (!response.ok) throw new Error("Failed to fetch supplier ledger");
+  return response.json();
+}
+
+export async function importSuppliers(
+  tenantId: string,
+  csv: string,
+): Promise<CsvImportResult> {
+  const response = await apiFetch(withTenantQuery("/suppliers/import", tenantId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ csv }),
+  });
+  if (!response.ok) throw new Error("Failed to import suppliers");
+  return response.json();
+}
+
+export async function deleteSupplier(tenantId: string, id: string): Promise<void> {
+  const response = await apiFetch(withTenantQuery(`/suppliers/${id}`, tenantId), {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(body?.message ?? "Failed to delete supplier");
+  }
+}
+
+export async function paySupplierDue(
+  tenantId: string,
+  id: string,
+  input: PayContactDueRequest,
+): Promise<PayContactDueResult> {
+  const response = await apiFetch(
+    withTenantQuery(`/suppliers/${id}/pay-due`, tenantId),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(body?.message ?? "Failed to record payment");
+  }
+  return response.json();
+}
+
+export interface SupplierStockReportRow {
+  itemId: string;
+  sku: string;
+  name: string;
+  quantity: number;
+  totalCost: number;
+}
+
+export async function getSupplierStockReport(
+  tenantId: string,
+  supplierId: string,
+): Promise<SupplierStockReportRow[]> {
+  const response = await apiFetch(
+    withTenantQuery(`/suppliers/${supplierId}/stock-report`, tenantId),
+  );
+  if (!response.ok) throw new Error("Failed to fetch supplier stock report");
+  return response.json();
+}
