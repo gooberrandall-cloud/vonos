@@ -14,4 +14,4 @@ Env: `NEXT_PUBLIC_API_URL` (backend URL), `NEXT_PUBLIC_SKIP_AUTH=false`
 npm install
 echo "NEXT_PUBLIC_API_URL=http://localhost:3001" > apps/web/.env.local
 npm run dev
-``
+`
