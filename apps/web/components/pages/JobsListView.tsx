@@ -1,0 +1,277 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { StatusPill } from "@/components/atoms/StatusPill";
+import { DataTable, type ColumnConfig } from "@/components/organisms/DataTable";
+import { ServerPaginatedTable } from "@/components/organisms/ServerPaginatedTable";
+import { ListPageShell } from "@/components/organisms/ListPageShell";
+import {
+  Hq6StandardListShell,
+  useHq6ListChrome,
+} from "@/components/hq6/Hq6StandardListShell";
+import { getJobsPage } from "@/lib/api/jobs";
+import { useRecordNavigation } from "@/lib/hooks/useRecordNavigation";
+import { useListPageFilters } from "@/lib/hooks/useListPageFilters";
+import { useServerListPage } from "@/lib/hooks/useServerListPage";
+import { chronoListCursor } from "@/lib/utils/pagination";
+import { useIsVaHq6 } from "@/lib/hooks/useIsVaHq6";
+import { prefetchJobDetail } from "@/lib/query/prefetchListDetails";
+import { formatCurrency } from "@/lib/utils/formatCurrency";
+import type { Job } from "@vonos/types";
+import { useTenantId } from "@/lib/hooks/useRouteTenant";
+
+const JOB_TABS = [
+  { id: "all", label: "All Jobs" },
+  { id: "active", label: "Active" },
+  { id: "qc", label: "Pending QC" },
+  { id: "completed", label: "Completed" },
+];
+
+const ACTIVE_STATUSES = ["Received", "Quoted", "Approved", "In Progress"];
+
+const JOB_STATUS_OPTIONS = [
+  "Received",
+  "Quoted",
+  "Approved",
+  "In Progress",
+  "QC",
+  "Delivered",
+].map((value) => ({ value, label: value }));
+
+function tabStatusFilter(tab: string): string | undefined {
+  if (tab === "qc") return "QC";
+  if (tab === "completed") return "Delivered";
+  return undefined;
+}
+
+export function JobsListView() {
+  const isHq6 = useIsVaHq6();
+  const { goToDetail, prefetchDetail } = useRecordNavigation("jobs");
+  const tenantId = useTenantId();
+  const queryClient = useQueryClient();
+  const chrome = useHq6ListChrome("jobs");
+  const { dateRange, setDateRange, search, setSearch, bounds } = useListPageFilters({
+    defaultDateRange: "last_7_days",
+    isolateDateRange: true,
+  });
+  const [activeTab, setActiveTab] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("");
+
+  const apiFilters = useMemo(() => {
+    const next: {
+      status?: string;
+      statuses?: string[];
+      search?: string;
+      from?: string;
+      to?: string;
+    } = {
+      from: bounds?.from,
+      to: bounds?.to,
+    };
+    if (statusFilter) {
+      next.status = statusFilter;
+    } else if (activeTab === "active") {
+      next.statuses = ACTIVE_STATUSES;
+    } else {
+      next.status = tabStatusFilter(activeTab);
+    }
+    return next;
+  }, [activeTab, bounds?.from, bounds?.to, search, statusFilter]);
+
+  const {
+    items: jobs,
+    hasMore,
+    totalCount,
+    pageIndex,
+    pageSize,
+    canGoPrev,
+    goNext,
+    goPrev,
+    setPageSize,
+    isLoading,
+    isFetching,
+    isPaging,
+    error,
+    goToPage,
+    canSelectPage,
+  } = useServerListPage({
+    queryKey: ["jobs", tenantId],
+    enabled: Boolean(tenantId),
+    filters: apiFilters,
+    search,
+    searchMode: "hybrid",
+    fetchPage: (cursor, limit, _sort, opts) =>
+      getJobsPage(
+        tenantId!,
+        {
+          ...apiFilters,
+          search: opts?.search,
+          includeSummary: opts?.includeSummary,
+        },
+        cursor,
+        limit,
+      ),
+    getCursor: (row) => chronoListCursor(row),
+  });
+
+  const warmJob = (row: Job) => {
+    prefetchDetail(row.id);
+    if (tenantId) prefetchJobDetail(queryClient, tenantId, row.id, row);
+  };
+
+  const columns: ColumnConfig<Job>[] = [
+    {
+      key: "reference",
+      header: "Job #",
+      render: (r) => <span className="font-medium">{r.reference}</span>,
+    },
+    { key: "description", header: "Description" },
+    { key: "customerName", header: "Customer" },
+    {
+      key: "status",
+      header: "Status",
+      render: (r) => <StatusPill status={r.status} vocabulary="jobStatus" />,
+    },
+    {
+      key: "quoteAmount",
+      header: "Quote",
+      sortValue: (r) => r.quoteAmount ?? 0,
+      render: (r) =>
+        r.quoteAmount ? formatCurrency(r.quoteAmount, "NGN") : "—",
+    },
+    {
+      key: "dueDate",
+      header: "Due",
+      sortValue: (r) => (r.dueDate ? new Date(r.dueDate).getTime() : 0),
+    },
+  ];
+
+  const columnOptions = columns.map((c) => ({
+    key: c.key,
+    label: String(c.header || c.key),
+  }));
+
+  const effectiveColumns = useMemo(() => {
+    if (!chrome.visibleColumnKeys) return columns;
+    const allowed = new Set(chrome.visibleColumnKeys);
+    return columns.filter((c) => allowed.has(c.key));
+  }, [chrome.visibleColumnKeys, columns]);
+
+  if (isHq6) {
+    return (
+      <Hq6StandardListShell
+        slug="jobs"
+        tabLabel="All Jobs"
+        pageSize={pageSize}
+        onPageSizeChange={setPageSize}
+        searchValue={search}
+        onSearchChange={setSearch}
+        
+        columnOptions={columnOptions}
+        chrome={chrome}
+        tabs={JOB_TABS.map((tab) => ({
+          ...tab,
+          active: activeTab === tab.id,
+          onClick: () => setActiveTab(tab.id),
+        }))}
+        filters={
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <label className="hq6-field">
+              <span>Status:</span>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+              >
+                <option value="">All</option>
+                {JOB_STATUS_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        }
+        pagination={{
+          pageIndex,
+          pageSize,
+          itemCount: jobs.length,
+          hasMore,
+          canGoPrev,
+          onPrev: goPrev,
+          onNext: goNext,
+          onPageSizeChange: setPageSize,
+          onPageSelect: goToPage,
+          canSelectPage,
+          totalItems: totalCount,
+          isBusy: isFetching && !isLoading,
+        }}
+      >
+        <DataTable
+          data={jobs}
+          columns={effectiveColumns}
+          displayMode="table"
+          embedded
+          disablePagination
+          isLoading={isLoading}
+          isFetching={isFetching && !isLoading}
+          error={error ? "Failed to load jobs" : null}
+          emptyState={{ message: "No jobs found." }}
+          onRowPointerEnter={warmJob}
+          onRowClick={(row) => {
+            warmJob(row);
+            goToDetail(row.id);
+          }}
+        />
+      </Hq6StandardListShell>
+    );
+  }
+
+  return (
+    <ListPageShell
+      tabs={JOB_TABS}
+      activeTab={activeTab}
+      onTabChange={setActiveTab}
+      searchValue={search}
+      onSearchChange={setSearch}
+      searchPlaceholder="Search jobs..."
+      dateRange={dateRange}
+      onDateRangeChange={setDateRange}
+      filterDropdowns={[
+        {
+          id: "status",
+          label: "Status",
+          value: statusFilter,
+          onChange: setStatusFilter,
+          options: JOB_STATUS_OPTIONS,
+        },
+      ]}
+    >
+      <div className="p-4 pt-0">
+        <ServerPaginatedTable
+          items={jobs}
+          columns={columns}
+          pageIndex={pageIndex}
+          pageSize={pageSize}
+          hasMore={hasMore}
+          canGoPrev={canGoPrev}
+          onNext={goNext}
+          onPrev={goPrev}
+          onPageSizeChange={setPageSize}
+          onPageSelect={goToPage}
+          canSelectPage={canSelectPage}
+          isLoading={isLoading}
+          isFetching={isFetching}
+          isPaging={isPaging}
+          error={error ? "Failed to load jobs" : null}
+          onRowPointerEnter={warmJob}
+          onRowClick={(row) => {
+            warmJob(row);
+            goToDetail(row.id);
+          }}
+        />
+      </div>
+    </ListPageShell>
+  );
+}
