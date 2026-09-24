@@ -1,0 +1,37 @@
+import type { Metadata } from "next";
+import type { ReactNode } from "react";
+import { DM_Sans } from "next/font/google";
+
+import MarketingShell from "@/components/marketing/MarketingShell";
+import { hostGrotesk } from "@/lib/fonts";
+import { SITE_NAME, absoluteUrl } from "@/lib/seo/site";
+
+import "@/styles/marketing.css";
+import "@/styles/shop-ecommerce.css";
+import "@/styles/vonos-ecommerce.css";
+
+/** Body typeface — shop + Motocare marketing pages. */
+const dmSans = DM_Sans({
+  variable: "--font-dm-sans",
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+});
+
+export const metadata: Metadata = {
+  alternates: { canonical: absoluteUrl("/") },
+  openGraph: {
+    siteName: SITE_NAME,
+  },
+};
+
+export default function MarketingLayout({ children }: { children: ReactNode }) {
+  return (
+    <>
+      <link rel="stylesheet" href="/styles/motocare-scraped.css" />
+      <link rel="stylesheet" href="/styles/vonos-theme.css" />
+      <div className={`${dmSans.variable} ${hostGrotesk.variable} marketing-root`}>
+        <MarketingShell>{children}</MarketingShell>
+      </div>
+    </>
+  );
+}
