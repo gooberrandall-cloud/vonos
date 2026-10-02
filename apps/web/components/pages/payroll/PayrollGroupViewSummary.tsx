@@ -1,0 +1,113 @@
+"use client";
+
+import type { Payroll, PayrollGroupDetail } from "@vonos/types";
+import { Hq6BoldStatusBadge } from "@/components/hq6/Hq6BoldStatusBadge";
+import { Hq6AddPaymentWellsRow } from "@/components/hq6/Hq6AddPaymentForm";
+import { formatCurrency } from "@/lib/utils/formatCurrency";
+import { payrollBankDetailLines } from "./payrollDraftUtils";
+
+export type PayrollGroupViewSummaryProps = {
+  group: PayrollGroupDetail;
+};
+
+function bankDetailsSummary(row: Payroll): string {
+  const lines = payrollBankDetailLines(row)
+    .filter((line) => line.value.trim())
+    .map((line) => `${line.label}: ${line.value}`);
+  return lines.length > 0 ? lines.join(" · ") : "—";
+}
+
+function employeeWells(row: Payroll) {
+  const paidToDate = row.paidToDate ?? 0;
+  const remaining = Math.max(0, row.netPay - paidToDate);
+  return {
+    partyLabel: "Employee",
+    partyName: row.employeeName,
+    partyExtra: [
+      row.designationName?.trim()
+        ? `Designation: ${row.designationName}`
+        : null,
+      row.department?.trim() ? `Department: ${row.department}` : null,
+    ]
+      .filter(Boolean)
+      .join(" · ") || null,
+    docLabel: "Bank details",
+    docRef: bankDetailsSummary(row),
+    locationName: row.locationCode?.trim() || null,
+    totalAmount: formatCurrency(row.netPay, "NGN"),
+    paymentDue: formatCurrency(remaining, "NGN"),
+  };
+}
+
+export function PayrollGroupViewSummary({ group }: PayrollGroupViewSummaryProps) {
+  return (
+    <div className="hq6-add-payment-body space-y-4">
+      {group.payrolls.length === 0 ? (
+        <section className="hq6-form-card">
+          <p className="text-sm text-[#64748b]">No payroll rows in this group.</p>
+        </section>
+      ) : (
+        group.payrolls.map((row, index) => (
+          <section key={row.id} className="hq6-form-card">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="hq6-form-card-title mb-0">
+                Employee {index + 1} · {row.employeeName}
+              </h2>
+              <Hq6BoldStatusBadge status={row.paymentStatus} kind="payment" />
+            </div>
+
+            <Hq6AddPaymentWellsRow wells={employeeWells(row)} />
+
+            <div className="mt-3 grid gap-2 border-t border-[#e5e7eb] pt-3 text-sm md:grid-cols-4">
+              <div>
+                <span className="text-[#64748b]">Gross pay: </span>
+                <span className="font-medium tabular-nums">
+                  {formatCurrency(row.grossPay || 0, "NGN")}
+                </span>
+              </div>
+              <div>
+                <span className="text-[#64748b]">Earnings: </span>
+                <span className="font-medium tabular-nums">
+                  {formatCurrency(row.totalAllowance, "NGN")}
+                </span>
+              </div>
+              <div>
+                <span className="text-[#64748b]">Deductions: </span>
+                <span className="font-medium tabular-nums">
+                  {formatCurrency(row.totalDeduction, "NGN")}
+                </span>
+              </div>
+              <div>
+                <span className="text-[#64748b]">Net pay: </span>
+                <span className="font-semibold tabular-nums">
+                  {formatCurrency(row.netPay, "NGN")}
+                </span>
+              </div>
+            </div>
+            {(row.paidToDate ?? 0) > 0 &&
+            row.paymentStatus !== "paid" ? (
+              <div className="mt-2 border-t border-[#e5e7eb] pt-2 text-sm">
+                <span className="text-[#64748b]">Paid to date: </span>
+                <span className="font-medium tabular-nums">
+                  {formatCurrency(row.paidToDate ?? 0, "NGN")}
+                </span>{" "}
+                <span className="text-[#64748b]">of</span>{" "}
+                <span className="font-medium tabular-nums">
+                  {formatCurrency(row.netPay, "NGN")}
+                </span>{" "}
+                <span className="text-[#64748b]">
+                  — remaining{" "}
+                  {formatCurrency(
+                    Math.max(0, row.netPay - (row.paidToDate ?? 0)),
+                    "NGN",
+                  )}{" "}
+                  can be paid partially from the Pay button.
+                </span>
+              </div>
+            ) : null}
+          </section>
+        ))
+      )}
+    </div>
+  );
+}
